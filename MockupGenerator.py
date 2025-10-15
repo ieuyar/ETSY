@@ -1,10 +1,9 @@
 """
-Art Mockup Generator (Enhanced Quality & Color Matching)
+Art Mockup Generator (Enhanced Quality & Color Matching) developed by Etem Uyar(@ieuyar)
 
 This script takes photos from an input folder, crops them to a 24x36 aspect ratio, 
-adds a fine art frame and mat, extracts dominant colors, and then uses the 
-Gemini API to generate high-quality, color-matched, 
-realistic mockups in various room settings.
+adds a fine art frame and mat, and then uses the Gemini API to generate high-quality,
+realistic mockups. It will skip generating mockups that already exist in the output folder.
 
 Setup:
 1. Install required libraries:
@@ -29,14 +28,14 @@ from colorthief import ColorThief # New import for color extraction
 
 # --- CONFIGURATION ---
 # IMPORTANT: Paste your Gemini API key here
-API_KEY = "" # YOUR API KEY HERE
+API_KEY = "AIzaSyAWNkEaYDDqHYRYlCNOSeQPkYxRVUfKJ30" # YOUR API KEY HERE
 
 # --- Gemini Model ---
 # Switched back to the correct model for image generation
 GEMINI_MODEL = "gemini-2.5-flash-image-preview" 
 
 # --- Folders ---
-INPUT_FOLDER = "your_input_folder"
+INPUT_FOLDER = "Favs"
 OUTPUT_FOLDER = "mockup_outputs"
 
 # --- Framing Style ---
@@ -48,14 +47,15 @@ MAT_COLOR = "white"
 
 # --- Delay Settings (in seconds) ---
 # To avoid API rate limits. Increase if you still get errors.
-DELAY_BETWEEN_SCENES = 5  # Pause between generating living_room, bedroom, etc. for the SAME photo.
-DELAY_BETWEEN_PHOTOS = 5  # Pause after all scenes for one photo are done, before starting the next.
+DELAY_BETWEEN_SCENES = 1  # Pause between generating living_room, bedroom, etc. for the SAME photo.
+DELAY_BETWEEN_PHOTOS = 1  # Pause after all scenes for one photo are done, before starting the next.
 RETRY_DELAY = 5           # Initial wait time if the API says "Too Many Requests".
 
-# --- Mockup Scene Base Prompts (Enhanced for higher quality) ---
+# --- Mockup Scene Base Prompts (Updated for Etsy Cover Style) ---
 BASE_SCENE_PROMPTS = {
     "etsy_cover_mockup": "Place this framed artwork on a plain, minimalist, neutral off-white wall. The scene should be clean and simple, with no other objects or furniture. The lighting should be bright and natural, with dappled sunlight casting soft, artistic shadows from a window across the wall and frame. Ensure ultra-realistic detail and professional photography quality.",
     "living_room": "Place this framed artwork on a wall in a bright, modern living room. The room should be filled with realistic sunlight and soft shadows. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
+    "living_room_v2": "Place this framed artwork on a wall in a bright, cozy modern living room. The room should be filled with realistic sunlight and r shadows. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
     "bedroom": "Place this framed artwork on the wall above a neatly made bed in a cozy, minimalist bedroom. The lighting should be soft and natural. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
     "office": "Place this framed artwork on the wall of a clean, professional home office. The scene should have good lighting and look photorealistic. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality."
 }
@@ -158,15 +158,27 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
             response.raise_for_status()
             result = response.json()
 
-            if 'candidates' in result and result['candidates'][0]['content']['parts'][0]['inlineData']['data']:
-                generated_data = result['candidates'][0]['content']['parts'][0]['inlineData']['data']
-                image_data = base64.b64decode(generated_data)
-                return Image.open(BytesIO(image_data))
-            else:
-                print(f"   ❌ AI did not return a valid image. Response: {result}")
-                if "error" in result and "message" in result["error"]:
-                    print(f"      API Error Message: {result['error']['message']}")
+            # --- ROBUST ERROR HANDLING TO PREVENT CRASHES ---
+            candidate = result.get('candidates', [{}])[0]
+            
+            # Check if the generation was stopped for safety reasons
+            if candidate.get('finishReason') == 'SAFETY':
+                print(f"   ❌ Generation failed for '{scene_name}' due to safety filters. Skipping.")
                 return None
+
+            content = candidate.get('content')
+            if content and 'parts' in content and content['parts']:
+                part = content['parts'][0]
+                if 'inlineData' in part and 'data' in part['inlineData']:
+                    generated_data = part['inlineData']['data']
+                    image_data = base64.b64decode(generated_data)
+                    return Image.open(BytesIO(image_data))
+            
+            # If we reach here, the response structure was unexpected
+            print(f"   ❌ AI did not return a valid image for '{scene_name}'. The response structure was unexpected. Skipping.")
+            print(f"      Response: {result}")
+            return None
+            
         except requests.exceptions.RequestException as e:
             if e.response and e.response.status_code == 429:
                 if attempt < max_retries - 1:
@@ -187,6 +199,7 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
 def main():
     """Main function to run the mockup generation process."""
     print("--- Starting Art Mockup Generator ---")
+    print("--- (Will skip any mockups that have already been generated) ---")
 
     if not os.path.exists(INPUT_FOLDER):
         print(f"❌ Error: Input folder '{INPUT_FOLDER}' not found. Please create it and add your photos.")
@@ -206,31 +219,37 @@ def main():
         image_path = os.path.join(INPUT_FOLDER, filename)
         print(f"\nProcessing '{filename}' ({i + 1}/{len(image_files)}):")
 
-        print("   🖼️  Adding fine art frame and mat...")
-        framed_art = add_frame_and_mat(image_path)
+        # We only need to frame the image once per input file.
+        framed_art = None 
 
-        if framed_art:
-            print(f"   🎨 Extracting dominant color from '{filename}'...")
-            dominant_color_name = get_dominant_color_name(image_path)
-            print(f"   ✨ Dominant color detected: {dominant_color_name.capitalize()}")
+        for j, (scene_name, base_prompt) in enumerate(BASE_SCENE_PROMPTS.items()):
+            # --- CHECK IF MOCKUP ALREADY EXISTS ---
+            output_filename = f"{os.path.splitext(filename)[0]}_{scene_name}_mockup.jpg"
+            save_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            
+            if os.path.exists(save_path):
+                print(f"   ⏭️  Skipping '{scene_name}' for '{filename}' - mockup already exists.")
+                continue # Skip to the next scene in the loop
 
-            for j, (scene_name, base_prompt) in enumerate(BASE_SCENE_PROMPTS.items()):
-                # Insert the dominant color into the prompt
-                color_matched_prompt = base_prompt.replace(
-                    "a subtle, harmonious tone", f"a subtle, harmonious {dominant_color_name} tone"
-                )
-                mockup_image = generate_mockup_with_gemini(framed_art, color_matched_prompt, scene_name)
+            # --- Generate if it doesn't exist ---
+            # Frame the image only if we need to generate the first missing mockup for it
+            if not framed_art:
+                print("   🖼️  Adding fine art frame and mat...")
+                framed_art = add_frame_and_mat(image_path)
+                if not framed_art:
+                    # If framing failed, break out of this inner loop to go to the next image
+                    break 
 
-                if mockup_image:
-                    output_filename = f"{os.path.splitext(filename)[0]}_{scene_name}_mockup.jpg"
-                    save_path = os.path.join(OUTPUT_FOLDER, output_filename)
-                    # Increased JPEG quality and disabled chroma subsampling for max detail
-                    mockup_image.convert("RGB").save(save_path, "JPEG", quality=98, subsampling=0)
-                    print(f"   ✅ Successfully saved mockup to '{save_path}'")
-                
-                if j < len(BASE_SCENE_PROMPTS) - 1:
-                    print(f"   ... Waiting {DELAY_BETWEEN_SCENES} seconds before next scene ...")
-                    time.sleep(DELAY_BETWEEN_SCENES)
+            mockup_image = generate_mockup_with_gemini(framed_art, base_prompt, scene_name)
+
+            if mockup_image:
+                # Save the generated mockup
+                mockup_image.convert("RGB").save(save_path, "JPEG", quality=98, subsampling=0)
+                print(f"   ✅ Successfully saved mockup to '{save_path}'")
+            
+            if j < len(BASE_SCENE_PROMPTS) - 1:
+                print(f"   ... Waiting {DELAY_BETWEEN_SCENES} seconds before next scene ...")
+                time.sleep(DELAY_BETWEEN_SCENES)
         
         if i < len(image_files) - 1:
             print(f"\n--- Waiting {DELAY_BETWEEN_PHOTOS} seconds before processing next image ---")
