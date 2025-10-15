@@ -1,5 +1,5 @@
 """
-Art Mockup Generator (Enhanced Quality & Color Matching) developed by Etem Uyar(@ieuyar)
+Art Mockup Generator (Enhanced Quality & Color Matching) developed by Etem Uyar @ieuyar
 
 This script takes photos from an input folder, crops them to a 24x36 aspect ratio, 
 adds a fine art frame and mat, and then uses the Gemini API to generate high-quality,
@@ -31,7 +31,6 @@ from colorthief import ColorThief # New import for color extraction
 API_KEY = "" # YOUR API KEY HERE
 
 # --- Gemini Model ---
-# Switched back to the correct model for image generation
 GEMINI_MODEL = "gemini-2.5-flash-image-preview" 
 
 # --- Folders ---
@@ -39,23 +38,22 @@ INPUT_FOLDER = "Favs"
 OUTPUT_FOLDER = "mockup_outputs"
 
 # --- Framing Style ---
-# The script now crops photos to a 24x36 (or 36x24) aspect ratio before framing.
 FRAME_THICKNESS = 50       # Pixels for the black frame
 MAT_THICKNESS = 80         # Pixels for the white border/mat around the photo
 FRAME_COLOR = "black"
 MAT_COLOR = "white"
 
 # --- Delay Settings (in seconds) ---
-# To avoid API rate limits. Increase if you still get errors.
-DELAY_BETWEEN_SCENES = 1  # Pause between generating living_room, bedroom, etc. for the SAME photo.
-DELAY_BETWEEN_PHOTOS = 1  # Pause after all scenes for one photo are done, before starting the next.
+# Note: Low delay values may increase the risk of API rate-limiting errors.
+DELAY_BETWEEN_SCENES = 1  # Pause between generating scenes for the SAME photo.
+DELAY_BETWEEN_PHOTOS = 1  # Pause after all scenes for one photo are done.
 RETRY_DELAY = 5           # Initial wait time if the API says "Too Many Requests".
 
-# --- Mockup Scene Base Prompts (Updated for Etsy Cover Style) ---
+# --- Mockup Scene Base Prompts (with your new scenes included) ---
 BASE_SCENE_PROMPTS = {
     "etsy_cover_mockup": "Place this framed artwork on a plain, minimalist, neutral off-white wall. The scene should be clean and simple, with no other objects or furniture. The lighting should be bright and natural, with dappled sunlight casting soft, artistic shadows from a window across the wall and frame. Ensure ultra-realistic detail and professional photography quality.",
     "living_room": "Place this framed artwork on a wall in a bright, modern living room. The room should be filled with realistic sunlight and soft shadows. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
-    "living_room_v2": "Place this framed artwork on a wall in a bright, cozy modern living room. The room should be filled with realistic sunlight and r shadows. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
+    "living_room_v2": "Place this framed artwork on a wall in a bright, cozy modern living room. The room should be filled with realistic sunlight and soft shadows. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
     "bedroom": "Place this framed artwork on the wall above a neatly made bed in a cozy, minimalist bedroom. The lighting should be soft and natural. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality.",
     "office": "Place this framed artwork on the wall of a clean, professional home office. The scene should have good lighting and look photorealistic. The wall behind the artwork should have a subtle, harmonious tone. Ensure ultra-realistic detail, lifelike textures, and professional photography quality."
 }
@@ -68,26 +66,20 @@ def add_frame_and_mat(image_path):
     try:
         photo = Image.open(image_path).convert("RGB")
         iw, ih = photo.size
-
-        # Determine target aspect ratio (3:2 for landscape, 2:3 for portrait)
         is_landscape = iw > ih
         target_aspect = 3/2 if is_landscape else 2/3
         img_aspect = iw / ih
-
-        # Center-crop the image to the target aspect ratio
-        if abs(img_aspect - target_aspect) > 0.01: # Only crop if not already the right ratio
-            if img_aspect > target_aspect:  # Image is wider than target, crop width
+        if abs(img_aspect - target_aspect) > 0.01:
+            if img_aspect > target_aspect:
                 new_width = int(target_aspect * ih)
                 offset = (iw - new_width) // 2
                 cropped_photo = photo.crop((offset, 0, iw - offset, ih))
-            else:  # Image is taller than target, crop height
+            else:
                 new_height = int(iw / target_aspect)
                 offset = (ih - new_height) // 2
                 cropped_photo = photo.crop((0, offset, iw, ih - offset))
         else:
-            cropped_photo = photo # Aspect ratio is already correct
-
-        # Add the mat and frame
+            cropped_photo = photo
         matted_photo = ImageOps.expand(cropped_photo, border=MAT_THICKNESS, fill=MAT_COLOR)
         framed_photo = ImageOps.expand(matted_photo, border=FRAME_THICKNESS, fill=FRAME_COLOR)
         return framed_photo
@@ -99,9 +91,7 @@ def get_dominant_color_name(image_path):
     """Extracts the dominant color from an image and returns its name."""
     try:
         color_thief = ColorThief(image_path)
-        dominant_rgb = color_thief.get_color(quality=10) # quality=10 for faster processing
-
-        # Basic mapping of RGB to common color names (can be expanded)
+        dominant_rgb = color_thief.get_color(quality=10)
         r, g, b = dominant_rgb
         if r > 200 and g < 100 and b < 100: return "reddish"
         if g > 200 and r < 100 and b < 100: return "greenish"
@@ -114,16 +104,12 @@ def get_dominant_color_name(image_path):
         if r > g and r > b: return "warm" if g > 100 else "reddish"
         if g > r and g > b: return "cool green"
         if b > r and b > g: return "cool blue"
-        
-        # More nuanced checks for warm/cool neutrals
-        if r > b * 1.2 and g > b * 1.1: return "warm neutral" # More red/green
-        if b > r * 1.2 and b > g * 1.1: return "cool neutral" # More blue
-
-        return "neutral" # Default if no strong hue is detected
-
+        if r > b * 1.2 and g > b * 1.1: return "warm neutral"
+        if b > r * 1.2 and b > g * 1.1: return "cool neutral"
+        return "neutral"
     except Exception as e:
         print(f"   ⚠️ Could not extract dominant color for {os.path.basename(image_path)}: {e}")
-        return "harmonious" # Fallback if color extraction fails
+        return "harmonious"
 
 def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
     """Sends the framed image to the Gemini API and returns the mockup image."""
@@ -134,11 +120,11 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
     print(f"   🤖 Sending to AI for '{scene_name}' mockup...")
 
     buffered = BytesIO()
-    framed_image.save(buffered, format="PNG")
+    framed_image.convert("RGB").save(buffered, format="JPEG", quality=95)
     img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
     payload = {
-        "contents": [{"parts": [{"text": scene_prompt}, {"inlineData": {"mimeType": "image/png", "data": img_base64}}]}],
+        "contents": [{"parts": [{"text": scene_prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_base64}}]}],
         "generationConfig": {"responseModalities": ["IMAGE"]},
         "safetySettings": [
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
@@ -154,18 +140,14 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=240) # Increased timeout
+            response = requests.post(api_url, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
             result = response.json()
 
-            # --- ROBUST ERROR HANDLING TO PREVENT CRASHES ---
             candidate = result.get('candidates', [{}])[0]
-            
-            # Check if the generation was stopped for safety reasons
             if candidate.get('finishReason') == 'SAFETY':
                 print(f"   ❌ Generation failed for '{scene_name}' due to safety filters. Skipping.")
                 return None
-
             content = candidate.get('content')
             if content and 'parts' in content and content['parts']:
                 part = content['parts'][0]
@@ -173,12 +155,8 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
                     generated_data = part['inlineData']['data']
                     image_data = base64.b64decode(generated_data)
                     return Image.open(BytesIO(image_data))
-            
-            # If we reach here, the response structure was unexpected
-            print(f"   ❌ AI did not return a valid image for '{scene_name}'. The response structure was unexpected. Skipping.")
-            print(f"      Response: {result}")
+            print(f"   ❌ AI did not return a valid image for '{scene_name}'. Response: {result}")
             return None
-            
         except requests.exceptions.RequestException as e:
             if e.response and e.response.status_code == 429:
                 if attempt < max_retries - 1:
@@ -186,13 +164,11 @@ def generate_mockup_with_gemini(framed_image, scene_prompt, scene_name):
                     print(f"   ⚠️ Rate limit hit. Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    print(f"   ❌ API rate limit exceeded after {max_retries} attempts. Try again later.")
+                    print(f"   ❌ API rate limit exceeded after {max_retries} attempts.")
                     return None
             else:
                 print(f"   ❌ API request failed: {e}")
-                if e.response:
-                    print(f"      Status Code: {e.response.status_code}")
-                    print(f"      Response Body: {e.response.text}")
+                if e.response: print(f"      Status: {e.response.status_code}, Body: {e.response.text}")
                 return None
     return None
 
@@ -202,48 +178,45 @@ def main():
     print("--- (Will skip any mockups that have already been generated) ---")
 
     if not os.path.exists(INPUT_FOLDER):
-        print(f"❌ Error: Input folder '{INPUT_FOLDER}' not found. Please create it and add your photos.")
+        print(f"❌ Error: Input folder '{INPUT_FOLDER}' not found.")
         return
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    
     image_files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-
     if not image_files:
         print(f"❌ No images found in '{INPUT_FOLDER}'.")
         return
 
     print(f"✅ Found {len(image_files)} images to process.")
-
     for i, filename in enumerate(image_files):
         image_path = os.path.join(INPUT_FOLDER, filename)
         print(f"\nProcessing '{filename}' ({i + 1}/{len(image_files)}):")
-
-        # We only need to frame the image once per input file.
-        framed_art = None 
+        
+        framed_art = None
+        dominant_color_name = None
 
         for j, (scene_name, base_prompt) in enumerate(BASE_SCENE_PROMPTS.items()):
-            # --- CHECK IF MOCKUP ALREADY EXISTS ---
             output_filename = f"{os.path.splitext(filename)[0]}_{scene_name}_mockup.jpg"
             save_path = os.path.join(OUTPUT_FOLDER, output_filename)
-            
             if os.path.exists(save_path):
-                print(f"   ⏭️  Skipping '{scene_name}' for '{filename}' - mockup already exists.")
-                continue # Skip to the next scene in the loop
+                print(f"   ⏭️  Skipping '{scene_name}' - mockup already exists.")
+                continue
 
-            # --- Generate if it doesn't exist ---
-            # Frame the image only if we need to generate the first missing mockup for it
             if not framed_art:
                 print("   🖼️  Adding fine art frame and mat...")
                 framed_art = add_frame_and_mat(image_path)
-                if not framed_art:
-                    # If framing failed, break out of this inner loop to go to the next image
-                    break 
+                if not framed_art: break
+                
+                print(f"   🎨 Extracting dominant color from '{filename}'...")
+                dominant_color_name = get_dominant_color_name(image_path)
+                print(f"   ✨ Dominant color detected: {dominant_color_name.capitalize()}")
 
-            mockup_image = generate_mockup_with_gemini(framed_art, base_prompt, scene_name)
+            color_matched_prompt = base_prompt.replace(
+                "a subtle, harmonious tone", f"a subtle, harmonious {dominant_color_name} tone"
+            )
+            mockup_image = generate_mockup_with_gemini(framed_art, color_matched_prompt, scene_name)
 
             if mockup_image:
-                # Save the generated mockup
                 mockup_image.convert("RGB").save(save_path, "JPEG", quality=98, subsampling=0)
                 print(f"   ✅ Successfully saved mockup to '{save_path}'")
             
