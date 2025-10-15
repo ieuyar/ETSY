@@ -28,7 +28,7 @@ from colorthief import ColorThief # New import for color extraction
 
 # --- CONFIGURATION ---
 # IMPORTANT: Paste your Gemini API key here
-API_KEY = "AIzaSyAWNkEaYDDqHYRYlCNOSeQPkYxRVUfKJ30" # YOUR API KEY HERE
+API_KEY = "" # YOUR API KEY HERE
 
 # --- Gemini Model ---
 # Switched back to the correct model for image generation
